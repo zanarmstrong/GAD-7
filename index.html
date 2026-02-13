@@ -262,6 +262,32 @@
 
   .data-status.success { color: #3D6B45; }
   .data-status.error { color: #C2584B; }
+
+  .save-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 0.75rem;
+    padding: 0.5rem 1rem;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: var(--muted);
+    background: #F0EDE8;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+
+  .save-btn:hover {
+    background: #E6E2DC;
+    color: var(--text);
+  }
+
+  .save-btn:active {
+    background: #DDD8D2;
+  }
 </style>
 </head>
 <body>
@@ -280,6 +306,7 @@
     </div>
   </div>
 
+  <button id="savePng" class="save-btn">Save as PNG</button>
 
   <div class="data-input-area">
     <label for="dataInput" class="data-label">Paste your data here <span class="data-format">(date,score,annotation — one per line, blank score = missed session, annotation is optional)</span></label>
@@ -586,6 +613,144 @@ function render() {
 
 render();
 window.addEventListener("resize", render);
+
+// Save as PNG — draw directly to canvas
+document.getElementById("savePng").addEventListener("click", () => {
+  const scale = 2;
+  const W = 860;
+  const H = 440;
+  const pad = { top: 16, right: 120, bottom: 44, left: 42 };
+  const cw = W - pad.left - pad.right;
+  const ch = H - pad.top - pad.bottom;
+  const n = DATA.length;
+  const xBuffer = 20;
+  const xStep = (cw - 2 * xBuffer) / (n - 1);
+  const xPos = i => pad.left + xBuffer + i * xStep;
+  const yPos = v => pad.top + ch - ((v - Y_MIN) / (Y_MAX - Y_MIN)) * ch;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = W * scale;
+  canvas.height = H * scale;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(scale, scale);
+
+  // Background
+  ctx.fillStyle = "#FAF7F2";
+  ctx.fillRect(0, 0, W, H);
+
+  // Severity bands
+  const bandColors = [
+    { min: 0, max: 4, color: "#E0EAF5", name: "Minimal", range: "(0–4)", textColor: "#4A6FA5" },
+    { min: 5, max: 9, color: "#FFF8E1", name: "Mild", range: "(5–9)", textColor: "#B08C3E" },
+    { min: 10, max: 14, color: "#FFF0E0", name: "Moderate", range: "(10–14)", textColor: "#C07A3A" },
+    { min: 15, max: 21, color: "#FCE8E6", name: "Severe", range: "(15–21)", textColor: "#A3402F" },
+  ];
+  bandColors.forEach(band => {
+    const yTop = yPos(Math.min(band.max + 1, Y_MAX));
+    const yBot = yPos(band.min);
+    ctx.fillStyle = band.color;
+    ctx.fillRect(pad.left, yTop, cw, yBot - yTop);
+
+    // Band labels
+    const midY = (yTop + yBot) / 2;
+    ctx.font = "500 10px sans-serif";
+    ctx.fillStyle = band.textColor;
+    ctx.textAlign = "left";
+    ctx.fillText(band.name.toUpperCase(), pad.left + cw + 8, midY - 2);
+    ctx.globalAlpha = 0.7;
+    ctx.fillText(band.range, pad.left + cw + 8, midY + 10);
+    ctx.globalAlpha = 1;
+  });
+
+  // Grid lines
+  [0, 5, 10, 15, 21].forEach(v => {
+    if (v === BASELINE) return;
+    ctx.beginPath();
+    ctx.setLineDash([3, 4]);
+    ctx.strokeStyle = "#E2DDD8";
+    ctx.lineWidth = 0.5;
+    ctx.moveTo(pad.left, yPos(v));
+    ctx.lineTo(pad.left + cw, yPos(v));
+    ctx.stroke();
+  });
+
+  // Baseline
+  ctx.beginPath();
+  ctx.setLineDash([6, 4]);
+  ctx.strokeStyle = "#8B7355";
+  ctx.lineWidth = 1.5;
+  ctx.moveTo(pad.left - 4, yPos(BASELINE));
+  ctx.lineTo(pad.left + cw, yPos(BASELINE));
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Y-axis labels
+  ctx.font = "12px sans-serif";
+  ctx.fillStyle = "#9B9490";
+  ctx.textAlign = "right";
+  [0, 5, 10, 15, 21].forEach(v => {
+    ctx.fillText(v, pad.left - 10, yPos(v) + 4);
+  });
+
+  // Format date
+  const fmt = ds => {
+    const d = new Date(ds + "T00:00:00");
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  };
+
+  // X-axis labels
+  ctx.font = "11px sans-serif";
+  ctx.textAlign = "center";
+  DATA.forEach((d, i) => {
+    ctx.fillStyle = (d.score === null || d.score === undefined) ? "#CCC5BE" : "#706862";
+    ctx.fillText(fmt(d.date), xPos(i), H - pad.bottom + 20);
+  });
+
+  // Sticks + dots + labels
+  DATA.forEach((d, i) => {
+    if (d.score === null || d.score === undefined) return;
+    const cx = xPos(i);
+    const above = d.score >= BASELINE;
+
+    // Stick
+    if (above) {
+      ctx.beginPath();
+      ctx.strokeStyle = "#2B4C7E";
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = "round";
+      ctx.moveTo(cx, yPos(BASELINE));
+      ctx.lineTo(cx, yPos(d.score));
+      ctx.stroke();
+    }
+
+    // Dot
+    ctx.beginPath();
+    ctx.fillStyle = "#1A3558";
+    ctx.arc(cx, yPos(d.score), 6, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Score label
+    ctx.font = "600 11px sans-serif";
+    ctx.fillStyle = "#1A3558";
+    ctx.textAlign = "center";
+    ctx.fillText(d.score, cx, yPos(d.score) + (above ? -12 : 16));
+
+    // Annotation
+    if (d.annotation) {
+      ctx.font = "italic 9px sans-serif";
+      ctx.fillStyle = "#9B9490";
+      ctx.fillText(d.annotation, cx, yPos(d.score) + (above ? -26 : 28));
+    }
+  });
+
+  // Download
+  const a = document.createElement("a");
+  a.download = "gad7-chart.png";
+  a.href = canvas.toDataURL("image/png");
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+});
 </script>
 
 </body>
